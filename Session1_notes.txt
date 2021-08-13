@@ -1,0 +1,172 @@
+      
+      Hadoop space
+		1) HDFS folder directory - Folder, sub folders and files /db/vm007c/SMB
+
+     		2) Hive - Schema.Table - customer_dash.upgrades_1701
+
+
+		(MELD server) /home/bp-ksheen706 (Local space) (Mobaxterm,PyCharm)--> Hadoop 
+
+		ebdp-ch2-d840p.sys.comcast.net
+		ebdp-ch2-d760p.sys.comcast.net
+                ebdp-ch2-d863p.sys.comcast.net
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+  Hadoop - /db/vm007c/SMB (Mobaxterm) (All hadoop commands are available in starter documentation)
+
+	/user/bp-ksheen706
+
+	Type kinit and enter password
+
+
+	hdfs dfs -ls /db/vm007c/SMB/Customer_Dashboard/Files - To view files
+
+	hdfs dfs -mkdir /user/bp-ksheen706/new_folder_hadoop - To make a new folder
+
+	hadoop fs -copyFromLocal /home/bp-ksheen706/20200527_SFOV_import.csv /user/bp-ksheen706/new_folder_hadoop/20200527_SFOV_import.csv
+
+       hadoop fs -copyToLocal /user/bp-ksheen706/new_folder_hadoop/20200527_SFOV_import.csv /home/bp-ksheen706/20200527_SFOV_import.csv
+
+
+  Hive - Type hive 
+
+	use customer_dash; show tables; - To view table under the schema
+
+	show create schema customer_dash; - to view hdfs location of a hive schema
+
+	create database hadoop_test_schema location "/user/bp-ksheen706/new_folder_hadoop";  - to create a schema
+ -
+ ############################## PySpark Commands##################
+
+import DynamicLaunch
+spark=DynamicLaunch.start('bp-ipodut689','Hmw2kQCt5')
+
+import numpy as np
+import pandas as pd
+# import pandasql
+from datetime import date, datetime, timedelta
+from pyspark.context import SparkContext
+from pyspark.sql.session import SparkSession
+from pyspark.sql import HiveContext
+from pyspark import SparkConf
+sc = SparkContext.getOrCreate()
+spark_h=HiveContext(sc)
+spark_h.setConf("mapreduce.input.fileinputformat.input.dir.recursive","true")
+spark_h.setConf("mapred.input.dir.recursive","true")
+spark_h.setConf("spark.sql.hive.convertMetastoreParquet","false")
+
+import pyspark.sql.functions as F
+
+
+#*** 1. Reading a pyspark dataframe+server connections***
+
+# a.Sql server connection
+
+driver="com.microsoft.sqlserver.jdbc.SQLServerDriver"
+
+database = "SMB_SALES"
+user = "Sql_Hadoop_Marketing_Optimization"
+password  = "5KRzG[H+~Y7PL^f)"
+#user=user_smb_sales
+#password=password_smb_sales
+five9_date="'22Feb2020'"
+sql="select * from dbo.five9_cdr_current where date >="+five9_date
+server_name="brsdb-po-p01a.cable.comcast.com"
+port="4951"
+
+jdbc_url="jdbc:sqlserver://" + server_name + ":" + port + ";databaseName=" + database
+
+five9_cdr_v1 = spark.read.format("jdbc") \
+    .option("url", jdbc_url) \
+    .option("dbtable", '({sql}) as src'.format(sql=sql)) \
+    .option("user", user) \
+    .option("password", password) \
+    .option("driver", driver) \
+    .load()
+
+# b.Teradata connection
+
+driver="com.teradata.jdbc.TeraDriver"
+record_end_date="'2019-12-22'"
+
+server_name="dwtera-ch2-ap-vip.sys.comcast.net"
+sql=( '''select * 
+from NDW_BASE_VIEWS.employee where (DATE'''+record_end_date+''' LE RECORD_END_TS) and 'REP1SMBCAM' IN JOB_CODE_NAME
+''')
+user="EXT_BUSSERV_MKTG"
+password="Bussq1012020"
+
+jdbc_url="jdbc:teradata://" + server_name
+
+
+employee1 = spark.read.format("jdbc") \
+ .option("url", jdbc_url) \
+ .option("dbtable", '({sql}) as src'.format(sql=sql)) \
+ .option("user", user) \
+ .option("password", password) \
+ .option("driver", driver) \
+ .load()
+
+
+# c.Hive table connection
+
+#digital_dash:schema name,
+# spark_all_creatives_v2:table name
+spark_creatives1 = spark.sql("select * from digital_dash.spark_all_creatives_v2")
+spark_creatives1.show()
+
+#*** 2. Saving dataframe into hive +csv***
+
+# a.Saving to hive
+spark_creatives1.write.mode("overwrite").format("ORC").saveAsTable("debugging.demo")
+spark_creatives2=spark.sql("select * from debugging.demo")
+spark_creatives2.show()
+
+# b.Saving to csv via pandas
+spark_creatives2_pd=spark_creatives2.limit(100).toPandas()
+spark_creatives2_pd.to_csv('demo.csv')
+
+#c. To convert a pyspark dataframe directly to a csv into an HDFS location
+upgrades_backend_complete_final.coalesce(1).write.csv("/user/bp-ksheen706/upgrades_backend_complete_final.csv") - 
+
+#*** 3. Modifying a column (condition) ***
+#below command creates a new column 'indicator' based on condition of two columns:'dcm_campaign','partner_name'
+
+mod=spark_creatives1.withColumn('indicator',F.when((F.split(spark_creatives1['dcm_campaign'],"_").getItem(0)=='COMS')&(F.col('partner_name')=='Amazon'),2)\
+                                .when((F.split(spark_creatives1['dcm_campaign'],"_").getItem(0)=='COMS')&(F.col('partner_name')=='Roku'),1)\
+                                .otherwise(0))
+mod.select('dcm_campaign','partner_name','indicator').show()
+
+#*** 4. Filtering ***
+partner_filter=spark_creatives1.filter((F.col('partner_name')=='Amazon')&(F.col('platform')=='Desktop Mobile'))
+partner_filter.show()
+
+#*** 5. Pivot ***
+
+SAS statement below
+'''
+proc sql;create table pivot as select date,
+sum(actual_spend) as actual,
+sum(dcm_spend) as dcm
+from spark_creatives1
+group by 1;
+quit;
+'''
+Python statement below
+
+# a.Using python inbuilt method
+pivot=spark_creatives1.groupby('date').agg(F.sum('actual_spend').alias('actual'),F.sum('dcm_spend').alias('dcm'))
+# b.Using sparksql
+spark_creatives1.registerTempTable('spark_creatives1')
+sql=('''
+select date,
+sum(actual_spend) as actual,
+sum(dcm_spend) as dcm
+from spark_creatives1
+group by 1
+''')
+pivot=spark.sql(sql)
+
+	
